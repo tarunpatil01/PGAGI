@@ -1,31 +1,30 @@
 # TalentScout AI Hiring Assistant
-#
-# TalentScout is an AI-powered hiring assistant chatbot that streamlines candidate screening and technical evaluation for technology roles. It guides users through a conversational flow, collects essential information, and generates personalized technical questions for each skill in the candidate's tech stack. The assistant adapts to user input, handles unexpected responses, and ensures a smooth, context-aware experience.
+
+   TalentScout is an AI-powered hiring assistant chatbot that streamlines candidate screening and technical evaluation for technology roles. It guides users through a conversational flow, collects essential information, and generates personalized technical questions for each skill in the candidate's tech stack. The assistant adapts to user input, handles unexpected responses, and ensures a smooth, context-aware experience.
 #
 # ## How It Works
-#
-# 1. **Conversational Screening:**
-#    - The chatbot collects candidate details (name, email, phone, experience, position, location, tech stack) through a friendly, step-by-step chat interface.
-# 2. **Technical Question Generation:**
-#    - For each skill in the tech stack, the app generates a technical question using a local LLM (Phi-3 Mini via Ollama).
-#    - If the LLM fails or returns duplicate/irrelevant questions, the app uses a built-in local question bank for popular skills (e.g., React, FastAPI, C++, Python, etc.).
-#    - If a skill is not recognized, the app provides a generic fallback question ("What is your experience with {skill}? Describe briefly.").
-# 3. **Robust Fallbacks:**
-#    - The app automatically retries question generation for each skill up to three times.
-#    - If all attempts fail, the fallback logic ensures the candidate always receives a meaningful question or prompt.
-# 4. **Session Management:**
-#    - All candidate responses and session data are securely stored in MongoDB for later review.
-# 5. **User Experience:**
-#    - The UI is built with Streamlit, featuring a clean, mobile-friendly design and clear error/fallback messaging.
-#
+
+ 1. **Conversational Screening:**
+    - The chatbot collects candidate details (name, email, phone, experience, position, location, tech stack) through a friendly, step-by-step chat interface.
+ 2. **Technical Question Generation:**
+    - For each skill in the tech stack, the app generates a technical question using a local LLM (Phi-3 Mini via Ollama).
+    - If the LLM fails or returns duplicate/irrelevant questions, the app uses a built-in local question bank for popular skills (e.g., React, FastAPI, C++, Python, etc.).
+    - If a skill is not recognized, the app provides a generic fallback question ("What is your experience with {skill}? Describe briefly.").
+ 3. **Robust Fallbacks:**
+    - The app automatically retries question generation for each skill up to three times.#    - If all attempts fail, the fallback logic ensures the candidate always receives a meaningful question or prompt.
+ 4. **Session Management:**
+    - All candidate responses and session data are securely stored in MongoDB for later review.
+ 5. **User Experience:**
+    - The UI is built with Streamlit, featuring a clean, mobile-friendly design and clear error/fallback messaging.
+
 # ## Key Features
-#
-# - **LLM-powered and Local Question Bank:** Combines AI-generated and curated questions for reliability.
-# - **Resilient to LLM Failures:** Always provides a relevant question, even if the LLM is unavailable or returns duplicates.
-# - **Strict Input Validation:** Ensures all candidate data is well-formed and meaningful.
-# - **Customizable:** Easily extend the local question bank or adjust validation rules.
-# - **Secure and Private:** Candidate data is stored locally and never shared externally.
-#
+
+ - **LLM-powered and Local Question Bank:** Combines AI-generated and curated questions for reliability.
+ - **Resilient to LLM Failures:** Always provides a relevant question, even if the LLM is unavailable or returns duplicates.
+ - **Strict Input Validation:** Ensures all candidate data is well-formed and meaningful.
+ - **Customizable:** Easily extend the local question bank or adjust validation rules.
+ - **Secure and Private:** Candidate data is stored locally and never shared externally.
+
 
 ## Project Overview
 TalentScout is an AI-powered hiring assistant chatbot designed to streamline candidate screening and technical evaluation. It guides users through a conversational flow, collects essential information, and generates personalized technical questions for each skill in the candidate's tech stack. The assistant adapts to user input, handles unexpected responses, and ensures a smooth, context-aware experience.
