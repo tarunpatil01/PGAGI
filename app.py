@@ -574,7 +574,6 @@ def main():
                     st.session_state.conversation_state = "tech_questions"
                 else:
                     # All questions answered
-                    info["tech_questions"] = []
                     info["_current_skill_idx"] = len(qlist)
                     personalized_name = info.get("name")
                     personalized_position = info.get("position")
@@ -602,6 +601,8 @@ def main():
                         except Exception as e:
                             print(f"[ERROR] Failed to insert into Chatbot.user collection: {e}")
                             info["_mongo_save_status"] = False
+                    # Now clear tech_questions if desired
+                    info["tech_questions"] = []
         elif state == "question_retry_choice":
             # Handle user choice after failed question generation
             user_choice = user_text.lower().strip()
