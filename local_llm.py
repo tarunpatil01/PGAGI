@@ -22,8 +22,8 @@ class LLMConfig:
     ollama_url: str = "http://localhost:11434"
     model_name: str = "phi3:mini"
     temperature: float = 0.7
-    max_tokens: int = 500
-    timeout: int = 30
+    max_tokens: int = 200
+    timeout: int = 15
     is_cloud: bool = False
 
 class Phi3OllamaManager:
@@ -34,12 +34,22 @@ class Phi3OllamaManager:
         self.is_connected = False
         self.model_available = False
         self.fallback_mode = False
+        self.last_check_time = 0
+        self.check_interval = 60  # Check every 60 seconds
+        self.response_cache = {}  # Simple response cache
+        self.cache_max_size = 10
         
         # Initialize connection
         self._initialize_connection()
     
     def _initialize_connection(self):
         """Initialize connection to Ollama service"""
+        current_time = time.time()
+        
+        # Skip if recently checked
+        if current_time - self.last_check_time < self.check_interval and self.is_connected:
+            return
+            
         try:
             logger.info("🔄 Checking Ollama connection...")
             
@@ -59,9 +69,12 @@ class Phi3OllamaManager:
                 logger.warning("⚠️ Ollama service not running")
                 self.fallback_mode = True
                 
+            self.last_check_time = current_time
+                
         except Exception as e:
             logger.error(f"❌ Failed to initialize connection: {str(e)}")
             self.fallback_mode = True
+            self.last_check_time = current_time
     
     def _check_ollama_service(self) -> bool:
         """Check if Ollama service is running"""
@@ -86,15 +99,23 @@ class Phi3OllamaManager:
     def generate_response(self, prompt: str, system_message: str = None, context: Dict = None) -> str:
         """Generate response using Phi-3"""
         
-        # Ensure connection is established
-        if not self.is_connected or not self.model_available:
-            self._initialize_connection()
+        # Create cache key
+        cache_key = f"{prompt[:50]}_{system_message[:30] if system_message else ''}"
+        
+        # Check cache first
+        if cache_key in self.response_cache:
+            return self.response_cache[cache_key]
+        
+        # Only check connection if not recently checked
+        self._initialize_connection()
         
         # Generate response with Phi-3
         if self.is_connected and self.model_available:
             try:
                 response = self._generate_phi3_response(prompt, system_message, context)
                 if response:
+                    # Cache the response
+                    self._cache_response(cache_key, response)
                     return response
                 else:
                     return "I'm having trouble generating a response. Could you please try again?"
@@ -104,13 +125,21 @@ class Phi3OllamaManager:
         
         return "I'm unable to connect to the AI model. Please check if Ollama is running and try again."
     
+    def _cache_response(self, key: str, response: str):
+        """Cache response with size limit"""
+        if len(self.response_cache) >= self.cache_max_size:
+            # Remove oldest entry
+            oldest_key = next(iter(self.response_cache))
+            del self.response_cache[oldest_key]
+        self.response_cache[key] = response
+    
     def _generate_phi3_response(self, prompt: str, system_message: str = None, context: Dict = None) -> str:
         """Generate response using Phi-3"""
         try:
             # Build the complete prompt
             full_prompt = self._build_prompt(prompt, system_message, context)
             
-            # Make request to Ollama
+            # Make request to Ollama with optimized settings
             response = requests.post(
                 f"{self.config.ollama_url}/api/generate",
                 json={
@@ -121,7 +150,8 @@ class Phi3OllamaManager:
                         "temperature": self.config.temperature,
                         "num_predict": self.config.max_tokens,
                         "top_p": 0.9,
-                        "repeat_penalty": 1.1
+                        "repeat_penalty": 1.1,
+                        "stop": ["\n\n", "User:", "Assistant:"]
                     }
                 },
                 timeout=self.config.timeout
@@ -135,6 +165,12 @@ class Phi3OllamaManager:
                 logger.error(f"❌ Ollama API error: {response.status_code}")
                 return None
                 
+        except requests.exceptions.Timeout:
+            logger.error("❌ Request timeout - model taking too long to respond")
+            return None
+        except requests.exceptions.ConnectionError:
+            logger.error("❌ Connection error - cannot reach Ollama service")
+            return None
         except Exception as e:
             logger.error(f"❌ Error generating Phi-3 response: {str(e)}")
             return None
@@ -144,11 +180,8 @@ class Phi3OllamaManager:
         
         # Default system message for hiring assistant
         if not system_message:
-            system_message = """You are a professional hiring assistant for TalentScout, a technology recruitment agency. 
-            You conduct initial candidate screenings with professionalism and warmth. 
-            Be friendly, professional, and encouraging. Ask clear, specific questions. 
-            Provide helpful guidance. Stay focused on the hiring process. 
-            Keep responses concise (2-3 sentences). Validate information appropriately."""
+            system_message = """You are TalentScout's hiring assistant. Be professional, friendly, and concise. 
+            Ask clear questions. Keep responses to 1-2 sentences. Focus on the hiring process."""
         
         # Add context if available
         context_str = ""

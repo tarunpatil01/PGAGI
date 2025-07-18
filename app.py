@@ -1,16 +1,39 @@
+# Local question bank for popular skills
+LOCAL_QUESTION_BANK = {
+    "react": "What is a React component and how does state management work in React?",
+    "fastapi": "What is FastAPI and how does it differ from Flask? Give a simple example of a FastAPI endpoint.",
+    "cpp": "What is RAII in C++ and how does its implementation affect resource management within an application? Provide a brief code example.",
+    "python": "What is a Python decorator and how is it used? Provide a simple example.",
+    "javascript": "What is event delegation in JavaScript and why is it useful?",
+    "mongodb": "What is a MongoDB document and how does it differ from a relational database row?",
+    "sql": "What is a JOIN in SQL and provide an example query.",
+    "docker": "What is Docker and how does containerization benefit development workflows?",
+    "git": "What is the difference between git merge and git rebase?",
+    "html": "What is the purpose of the <head> tag in HTML?",
+    "css": "What is the box model in CSS?",
+    "node.js": "What is the event loop in Node.js?",
+    "java": "What is inheritance in Java and how is it implemented?",
+}
+def is_valid_position(position):
+    val = position.strip()
+    # Only letters and spaces, at least two words, minimum 5 characters
+    if not re.match(r'^[A-Za-z ]+$', val):
+        return False
+    if len(val) < 5:
+        return False
+    if len(val.split()) < 2:
+        return False
+    return True
 import streamlit as st
-import json
 import os
 import re
 from datetime import datetime
-from typing import Dict, List, Optional
-from dataclasses import dataclass
 from dotenv import load_dotenv
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from pymongo import MongoClient
 
-# Load environment variables
 load_dotenv()
 
-# Import local LLM manager
 try:
     from local_llm import Phi3OllamaManager, LLMConfig
     LLM_AVAILABLE = True
@@ -18,587 +41,657 @@ except ImportError:
     LLM_AVAILABLE = False
     print("⚠️ Local LLM not available. Using fallback responses.")
 
-@dataclass
-class CandidateInfo:
-    """Data class to store candidate information"""
-    full_name: str = ""
-    email: str = ""
-    phone: str = ""
-    years_experience: str = ""
-    desired_position: str = ""
-    current_location: str = ""
-    tech_stack: List[str] = None
-    
-    def __post_init__(self):
-        if self.tech_stack is None:
-            self.tech_stack = []
-
-class TalentScoutChatbot:
-    def __init__(self):
-        self.conversation_state = "greeting"
-        self.candidate_info = CandidateInfo()
-        self.current_field = None
-        self.technical_questions = []
-        self.current_question_index = 0
-        self.conversation_history = []
-        
-    def get_llm_response(self, prompt: str, system_message: str = None) -> str:
-        """Get response from local LLM or fallback"""
-        if LLM_AVAILABLE:
-            try:
-                # Initialize Phi3OllamaManager with cloud config if needed
-                is_cloud = os.getenv("DEPLOYMENT_MODE") == "cloud"
-                config = LLMConfig(is_cloud=is_cloud)
-                llm_manager = Phi3OllamaManager(config)
-                
-                context = {
-                    "stage": self.conversation_state,
-                    "candidate_info": self.candidate_info.__dict__
-                }
-                
-                return llm_manager.generate_response(prompt, system_message, context)
-            except Exception as e:
-                st.error(f"Error with LLM: {str(e)}")
-                return self.get_fallback_response(prompt, system_message)
-        else:
-            return self.get_fallback_response(prompt, system_message)
-    
-    def get_fallback_response(self, prompt: str, system_message: str = None) -> str:
-        """Fallback responses when LLM is not available"""
-        
-        if system_message and "greeting" in system_message.lower():
-            return """Hello! Welcome to TalentScout, your AI-powered hiring assistant. 
-            
-I'm here to help you through our initial candidate screening process for technology positions. This will take about 10-15 minutes and will help our team understand your background and skills better.
-
-To get started, could you please tell me your full name?"""
-        
-        elif system_message and "technical" in system_message.lower():
-            # Use the technical question bank from utils
-            try:
-                from utils import TechnicalQuestionBank
-                question_bank = TechnicalQuestionBank()
-                
-                # Extract tech stack from prompt
-                tech_stack = []
-                if "tech stack:" in prompt.lower():
-                    tech_part = prompt.lower().split("tech stack:")[1].strip()
-                    tech_stack = [tech.strip() for tech in tech_part.split(",")]
-                
-                if tech_stack:
-                    questions = question_bank.get_questions_for_tech_stack(tech_stack, 3)
-                    return [q.question for q in questions]
-                else:
-                    return [
-                        "Can you describe your experience with the technologies you mentioned?",
-                        "What's your most challenging project involving these technologies?",
-                        "How do you stay updated with the latest developments in your field?"
-                    ]
-            except ImportError:
-                return [
-                    "Can you describe your experience with the technologies you mentioned?",
-                    "What's your most challenging project involving these technologies?",
-                    "How do you stay updated with the latest developments in your field?"
-                ]
-        
-        elif system_message and "fallback" in system_message.lower():
-            return """I understand you'd like to share that information, but let's focus on the screening process for now. 
-            
-Could you please provide the information I'm currently asking for? This will help me assist you better with your application."""
-        
-        else:
-            return """Thank you for your response. Let's continue with the screening process. 
-            
-Please provide the information I'm asking for, and I'll guide you through the next steps."""
-
-    def generate_greeting(self) -> str:
-        """Generate personalized greeting"""
-        system_message = """You are a friendly and professional hiring assistant chatbot for TalentScout, 
-        a recruitment agency specializing in technology placements. Your role is to conduct initial 
-        candidate screening by gathering essential information and asking relevant technical questions.
-        
-        Generate a warm, professional greeting that:
-        1. Welcomes the candidate
-        2. Briefly explains your purpose
-        3. Asks for their name to begin the process
-        
-        Keep it concise, friendly, and professional."""
-        
-        prompt = "Generate a greeting message for the hiring assistant chatbot."
-        
-        return self.get_llm_response(prompt, system_message)
-
-    def validate_email(self, email: str) -> bool:
-        """Validate email format"""
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        return re.match(pattern, email) is not None
-
-    def validate_phone(self, phone: str) -> bool:
-        """Validate phone number format"""
-        # Remove common separators and spaces
-        cleaned = re.sub(r'[-\s\(\)]+', '', phone)
-        # Check if it's a valid phone number (10-15 digits)
-        pattern = r'^\+?[1-9]\d{9,14}$'
-        return re.match(pattern, cleaned) is not None
-
-    def generate_technical_questions(self, tech_stack: List[str]) -> List[str]:
-        """Generate technical questions based on tech stack"""
-        system_message = """You are an expert technical interviewer. Generate 3-5 relevant technical 
-        questions for each technology in the candidate's tech stack. The questions should:
-        
-        1. Be appropriate for initial screening
-        2. Test both theoretical knowledge and practical application
-        3. Vary in difficulty from basic to intermediate
-        4. Be specific to the technology mentioned
-        5. Be answerable in a conversational format
-        
-        Return only the questions as a simple list, one per line."""
-        
-        tech_list = ", ".join(tech_stack)
-        prompt = f"""Generate technical questions for a candidate with the following tech stack: {tech_list}
-        
-        Please provide 3-5 questions total, distributed across the technologies mentioned."""
-        
-        response = self.get_llm_response(prompt, system_message)
-        
-        # Handle case where response might be a list or None
-        if isinstance(response, list):
-            response = " ".join(response)
-        elif response is None:
-            response = ""
-        
-        # Parse the response to extract questions
-        questions = []
-        lines = response.split('\n')
-        for line in lines:
-            line = line.strip()
-            # Remove numbering and clean up
-            if line and ('?' in line or line.strip().endswith('?')):
-                # Remove common prefixes like "1.", "Q1:", etc.
-                line = re.sub(r'^[0-9]+\.?\s*', '', line)
-                line = re.sub(r'^[Qq][0-9]*[:.]?\s*', '', line)
-                line = re.sub(r'^[-•*]\s*', '', line)
-                questions.append(line.strip())
-        
-        return questions[:5]  # Limit to 5 questions
-
-    def process_user_input(self, user_input: str) -> str:
-        """Process user input based on current conversation state"""
-        user_input = user_input.strip()
-        
-        # Check for conversation ending keywords
-        ending_keywords = ["goodbye", "bye", "exit", "quit", "end", "stop", "finish"]
-        if any(keyword in user_input.lower() for keyword in ending_keywords):
-            return self.end_conversation()
-        
-        # Add to conversation history
-        self.conversation_history.append({"role": "user", "content": user_input})
-        
-        if self.conversation_state == "greeting":
-            return self.handle_greeting(user_input)
-        elif self.conversation_state == "collecting_info":
-            return self.handle_info_collection(user_input)
-        elif self.conversation_state == "tech_stack":
-            return self.handle_tech_stack(user_input)
-        elif self.conversation_state == "technical_questions":
-            return self.handle_technical_questions(user_input)
-        else:
-            return self.handle_fallback(user_input)
-
-    def handle_greeting(self, user_input: str) -> str:
-        """Handle greeting and name collection"""
-        # Extract name from user input
-        self.candidate_info.full_name = user_input
-        self.conversation_state = "collecting_info"
-        self.current_field = "email"
-        
-        return f"Nice to meet you, {self.candidate_info.full_name}! Now I'll need to collect some basic information from you. Let's start with your email address."
-
-    def handle_info_collection(self, user_input: str) -> str:
-        """Handle information collection process"""
-        if self.current_field == "email":
-            if self.validate_email(user_input):
-                self.candidate_info.email = user_input
-                self.current_field = "phone"
-                return "Thank you! Now, could you please provide your phone number?"
-            else:
-                return "Please provide a valid email address (e.g., john.doe@email.com)."
-        
-        elif self.current_field == "phone":
-            if self.validate_phone(user_input):
-                self.candidate_info.phone = user_input
-                self.current_field = "years_experience"
-                return "Great! How many years of professional experience do you have?"
-            else:
-                return "Please provide a valid phone number (e.g., +1234567890 or 123-456-7890)."
-        
-        elif self.current_field == "years_experience":
-            self.candidate_info.years_experience = user_input
-            self.current_field = "desired_position"
-            return "What position(s) are you interested in applying for?"
-        
-        elif self.current_field == "desired_position":
-            self.candidate_info.desired_position = user_input
-            self.current_field = "current_location"
-            return "Where are you currently located?"
-        
-        elif self.current_field == "current_location":
-            self.candidate_info.current_location = user_input
-            self.conversation_state = "tech_stack"
-            return """Perfect! Now let's talk about your technical skills. Please list your tech stack - this includes programming languages, frameworks, databases, and tools you're proficient in. 
-
-For example: "Python, Django, PostgreSQL, React, AWS, Docker"
-
-Please provide your tech stack:"""
-
-    def handle_tech_stack(self, user_input: str) -> str:
-        """Handle tech stack collection and question generation"""
-        # Parse tech stack from user input
-        tech_items = [item.strip() for item in re.split(r'[,;]', user_input) if item.strip()]
-        self.candidate_info.tech_stack = tech_items
-        
-        # Generate technical questions
-        self.technical_questions = self.generate_technical_questions(tech_items)
-        
-        if self.technical_questions:
-            self.conversation_state = "technical_questions"
-            self.current_question_index = 0
-            
-            tech_summary = ", ".join(tech_items)
-            return f"""Excellent! I can see you have experience with: {tech_summary}
-
-Now I'll ask you a few technical questions to better understand your proficiency. Don't worry - these are just for initial screening purposes.
-
-**Question 1 of {len(self.technical_questions)}:**
-{self.technical_questions[0]}"""
-        else:
-            return "I'm having trouble generating questions for your tech stack. Could you please rephrase your technologies?"
-
-    def handle_technical_questions(self, user_input: str) -> str:
-        """Handle technical question responses"""
-        # Store the answer (in a real application, you might want to save this)
-        self.conversation_history.append({
-            "question": self.technical_questions[self.current_question_index],
-            "answer": user_input
-        })
-        
-        self.current_question_index += 1
-        
-        if self.current_question_index < len(self.technical_questions):
-            return f"""Thank you for your response!
-
-**Question {self.current_question_index + 1} of {len(self.technical_questions)}:**
-{self.technical_questions[self.current_question_index]}"""
-        else:
-            return self.complete_screening()
-
-    def complete_screening(self) -> str:
-        """Complete the screening process"""
-        self.conversation_state = "completed"
-        
-        return f"""Thank you for completing the initial screening, {self.candidate_info.full_name}!
-
-**Summary of your information:**
-- **Name:** {self.candidate_info.full_name}
-- **Email:** {self.candidate_info.email}
-- **Phone:** {self.candidate_info.phone}
-- **Experience:** {self.candidate_info.years_experience}
-- **Desired Position:** {self.candidate_info.desired_position}
-- **Location:** {self.candidate_info.current_location}
-- **Tech Stack:** {', '.join(self.candidate_info.tech_stack)}
-
-Your responses have been recorded and will be reviewed by our hiring team. You can expect to hear back from us within 2-3 business days.
-
-If you have any questions or need to update your information, please contact us at careers@talentscout.com.
-
-Thank you for your interest in opportunities with TalentScout! You can type 'goodbye' to end this conversation."""
-
-    def handle_fallback(self, user_input: str) -> str:
-        """Handle unexpected inputs"""
-        system_message = """You are a professional hiring assistant chatbot. The user has provided 
-        an input that doesn't fit the current conversation flow. Provide a helpful response that:
-        
-        1. Acknowledges their input politely
-        2. Gently redirects them back to the screening process
-        3. Maintains a professional and friendly tone
-        4. Doesn't deviate from the hiring assistant purpose"""
-        
-        prompt = f"""The user said: "{user_input}"
-        
-        Current conversation state: {self.conversation_state}
-        
-        Provide a helpful response that redirects them back to the screening process."""
-        
-        return self.get_llm_response(prompt, system_message)
-
-    def end_conversation(self) -> str:
-        """End the conversation gracefully"""
-        return f"""Thank you for your time, {self.candidate_info.full_name if self.candidate_info.full_name else 'candidate'}! 
-
-If you didn't complete the screening process, you're welcome to start over anytime. 
-
-For any questions or concerns, please contact us at careers@talentscout.com.
-
-Have a great day and good luck with your job search!
-
-*This conversation has ended. Refresh the page to start a new session.*"""
-
 def main():
+    # MongoDB connection (minimal, auto-save)
+    MONGO_URL = os.getenv("MONGO_URL")
+    MONGO_DB = os.getenv("MONGO_DB", "Chatbot")
+    MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "sessions")
+    if "mongo_client" not in st.session_state:
+        try:
+            st.session_state.mongo_client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=2000)
+            st.session_state.mongo_client.server_info()
+            st.session_state.mongo_ok = True
+            # Ensure 'user' collection exists in the database
+            db = st.session_state.mongo_client[MONGO_DB]
+            if 'user' not in db.list_collection_names():
+                db.create_collection('user')
+        except Exception:
+            st.session_state.mongo_ok = False
+
+
+    # Sentiment analyzer
+    if "sentiment_analyzer" not in st.session_state:
+        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+        st.session_state.sentiment_analyzer = SentimentIntensityAnalyzer()
+
+    # Minimal session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "user_input" not in st.session_state:
+        st.session_state.user_input = ""
+    if "chatbot" not in st.session_state:
+        is_cloud = os.getenv("DEPLOYMENT_MODE") == "cloud"
+        # Increase timeout and optimize config for Phi3:mini
+        config = LLMConfig(is_cloud=is_cloud)
+        if hasattr(config, 'timeout'):
+            config.timeout = 120  # Increase timeout to 120 seconds
+        if hasattr(config, 'model'):
+            config.model = "phi3:mini"
+        if hasattr(config, 'max_tokens'):
+            config.max_tokens = 512  # Limit response length for speed
+        st.session_state.chatbot = Phi3OllamaManager(config)
+
+    # Show loading animation at the very start
+    if "app_loaded" not in st.session_state:
+        st.session_state.app_loaded = False
+
+    if not st.session_state.app_loaded:
+        st.markdown("""
+        <style>
+        .center-spinner {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 60vh;
+        }
+        .lds-dual-ring {
+          display: inline-block;
+          width: 80px;
+          height: 80px;
+        }
+        .lds-dual-ring:after {
+          content: " ";
+          display: block;
+          width: 64px;
+          height: 64px;
+          margin: 8px;
+          border-radius: 50%;
+          border: 6px solid #00c3ff;
+          border-color: #00c3ff transparent #00c3ff transparent;
+          animation: lds-dual-ring 1.2s linear infinite;
+        # Auto-save to MongoDB
+        @keyframes lds-dual-ring {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        </style>
+        <div class="center-spinner">
+          <div class="lds-dual-ring"></div>
+          <div style="margin-top: 2rem; font-size: 1.2rem; color: #00c3ff; animation: fadeIn 1s;">Loading TalentScout... Please wait.</div>
+        </div>
+        <style>
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        import time as _time
+        _time.sleep(1.2)
+        st.session_state.app_loaded = True
+        st.rerun()
+
+    # Conversation state machine
+    if "conversation_state" not in st.session_state:
+        st.session_state.conversation_state = "greeting"
+    if "candidate_info" not in st.session_state:
+        st.session_state.candidate_info = {
+            "name": None,
+            "email": None,
+            "phone": None,
+            "experience": None,
+            "position": None,
+            "location": None,
+            "tech_stack": None,
+            "tech_questions": [],
+            "answers": {}
+        }
+    if len(st.session_state.messages) == 0:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "👋 Hello! Welcome to TalentScout. I'm your AI hiring assistant. I'll guide you through a quick screening to help match you with the best opportunities. You can type 'exit' or 'quit' anytime to end the chat.\n\nLet's get started! What's your full name?"
+        })
+        st.session_state.conversation_state = "get_name"
+
     st.set_page_config(
-        page_title="TalentScout Hiring Assistant",
+        page_title="TalentScout AI Hiring Assistant",
         page_icon="🤖",
-        layout="wide"
+        layout="wide",
+        initial_sidebar_state="expanded"
     )
-    
-    # Custom CSS for better styling
+
+    # Minimal sidebar
+    with st.sidebar:
+        st.markdown("<h3 style='color:#fff;'>TalentScout</h3>", unsafe_allow_html=True)
+        st.markdown("<hr style='border:1px solid #444;'>", unsafe_allow_html=True)
+        st.markdown("<span style='color:#aaa;'>AI Hiring Assistant</span>", unsafe_allow_html=True)
+        st.markdown("<span style='color:#aaa;'>Powered by Phi-3 + Ollama</span>", unsafe_allow_html=True)
+        if st.session_state.mongo_ok:
+            st.markdown("<span style='color:#0f0;'>Session auto-saved</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("<span style='color:#f00;'>Session not saved</span>", unsafe_allow_html=True)
+
+    # Main chat area CSS
     st.markdown("""
     <style>
-    .main-header {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-        text-align: center;
-        color: white;
+    .chat-bubble-user {
+        background: #fff;
+        color: #23272f;
+        border-radius: 16px 16px 4px 16px;
+        padding: 0.8rem 1.1rem;
+        max-width: 70%;
+        font-size: 1.08rem;
+        margin-left: auto;
+        margin-bottom: 1.1rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+        word-break: break-word;
     }
-    
-    .chat-container {
-        max-height: 500px;
-        overflow-y: auto;
-        padding: 1rem;
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
-        background-color: #f8f9fa;
+    .chat-bubble-bot {
+        background: #23272f;
+        color: #fff;
+        border-radius: 16px 16px 16px 4px;
+        padding: 1rem 1.3rem;
+        max-width: 70%;
+        font-size: 1.08rem;
+        margin-right: auto;
+        margin-bottom: 1.2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+        word-break: break-word;
     }
-    
-    .user-message {
-        background-color: #007bff;
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 15px;
-        margin: 0.5rem 0;
-        margin-left: 2rem;
-        text-align: right;
+    .send-btn {
+        background: #00c3ff;
+        border: none;
+        border-radius: 50%;
+        width: 38px;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 8px;
+        cursor: pointer;
+        transition: background 0.2s;
     }
-    
-    .bot-message {
-        background-color: #ffffff;
-        color: #333;
-        padding: 0.5rem 1rem;
-        border-radius: 15px;
-        margin: 0.5rem 0;
-        margin-right: 2rem;
-        border-left: 4px solid #667eea;
+    .send-btn:hover {
+        background: #0099cc;
     }
-    
-    .sidebar-info {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
+    .send-icon {
+        color: #fff;
+        font-size
+        font-size: 1.3rem;
+    }
+    .stTextArea textarea {
+        border-radius: 16px;
+        min-height: 48px;
+        font-size: 1.08rem;
+        padding-right: 48px;
+    }
+    .input-row {
+        display: flex;
+        align-items: center;
+        margin-top: 1.2rem;
+    }
+    /* Responsive styles for mobile */
+    @media (max-width: 600px) {
+        .chat-bubble-user, .chat-bubble-bot {
+            max-width: 98vw !important;
+            font-size: 1rem !important;
+            padding: 0.7rem 0.7rem !important;
+        }
+        .stTextArea textarea {
+            font-size: 1rem !important;
+            min-height: 38px !important;
+            padding-right: 38px !important;
+        }
+        .input-row {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        [data-testid="send-btn"] button {
+            width: 100% !important;
+            margin: 0.5rem 0 0 0 !important;
+        }
     }
     </style>
     """, unsafe_allow_html=True)
-    
-    # Header
-    st.markdown("""
-    <div class="main-header">
-        <h1>🤖 TalentScout Hiring Assistant</h1>
-        <p>Your AI-powered recruitment partner for technology placements</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Initialize chatbot in session state
-    if 'chatbot' not in st.session_state:
-        st.session_state.chatbot = TalentScoutChatbot()
-        st.session_state.messages = []
-        # Add initial greeting
-        initial_greeting = st.session_state.chatbot.generate_greeting()
-        st.session_state.messages.append({"role": "assistant", "content": initial_greeting})
-    
-    # Sidebar with information
-    with st.sidebar:
-        st.markdown("""
-        <div class="sidebar-info">
-            <h3>📋 About This Session</h3>
-            <p>This AI assistant will help you through our initial screening process.</p>
-            
-            <h4>📝 What We'll Collect:</h4>
-            <ul>
-                <li>Personal Information</li>
-                <li>Professional Experience</li>
-                <li>Technical Skills</li>
-                <li>Career Preferences</li>
-            </ul>
-            
-            <h4>⚡ Process:</h4>
-            <ol>
-                <li>Information Gathering</li>
-                <li>Tech Stack Assessment</li>
-                <li>Technical Questions</li>
-                <li>Screening Complete</li>
-            </ol>
-            
-            <h4>🔒 Privacy Note:</h4>
-            <p>Your information is handled securely and in compliance with privacy standards.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Current candidate info (if available)
-        if st.session_state.chatbot.candidate_info.full_name:
-            st.markdown("### 👤 Current Candidate")
-            info = st.session_state.chatbot.candidate_info
-            if info.full_name:
-                st.write(f"**Name:** {info.full_name}")
-            if info.email:
-                st.write(f"**Email:** {info.email}")
-            if info.years_experience:
-                st.write(f"**Experience:** {info.years_experience}")
-            if info.tech_stack:
-                st.write(f"**Tech Stack:** {', '.join(info.tech_stack)}")
-        
-        # LLM Status
-        st.markdown("### 🤖 AI Model Status")
-        if LLM_AVAILABLE:
-            try:
-                # Initialize Phi3OllamaManager to check status
-                is_cloud = os.getenv("DEPLOYMENT_MODE") == "cloud"
-                config = LLMConfig(is_cloud=is_cloud)
-                llm_manager = Phi3OllamaManager(config)
-                
-                if llm_manager.is_connected and llm_manager.model_available:
-                    st.success("✅ Phi-3 with Ollama Connected")
-                elif llm_manager.is_connected and not llm_manager.model_available:
-                    st.info("🔄 Phi-3 Model Loading...")
-                else:
-                    st.warning("⚠️ Using Intelligent Fallback Responses")
-            except Exception as e:
-                st.warning(f"⚠️ Using Intelligent Fallback Responses ({str(e)})")
+
+    # Display chat messages
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            st.markdown(f"<div class='chat-bubble-user'>{message['content']}</div>", unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Using Intelligent Fallback Responses")
-        
-        # Help section
-        st.markdown("### ❓ Need Help?")
-        st.markdown("""
-        - **Stuck?** Try rephrasing your response
-        - **Error?** Refresh the page to restart
-        - **Questions?** Type 'goodbye' to end and contact us
-        - **Technical Issues?** Check the sidebar for guidance
-        """)
-        
-        # Setup Instructions
-        with st.expander("🔧 Setup Instructions"):
+            st.markdown(f"<div class='chat-bubble-bot'><span style='font-weight:600;color:#00c3ff;'>🤖 TalentScout:</span><br>{message['content']}</div>", unsafe_allow_html=True)
+
+    # Chat input row with send icon
+    # Use Streamlit form for reliable Ctrl+Enter and input handling
+    with st.form(key="chat_form", clear_on_submit=True):
+        input_col, btn_col = st.columns([10,1])
+        with input_col:
+            user_input = st.text_area(
+                "Your message",
+                value="",  # Always start empty
+                key="user_input_box",
+                height=160,
+                label_visibility="collapsed",
+                max_chars=1000,
+                help=None
+            )
+        with btn_col:
             st.markdown("""
-            **For better AI responses, install Ollama:**
-            
-            1. **Windows**: Download from [ollama.com](https://ollama.com/download)
-            2. **Install Phi-3**: Run `ollama pull phi3:mini`
-            3. **Start service**: Run `ollama serve`
-            4. **Restart app**: Refresh this page
-            
-            **Alternative**: The app works with fallback responses if Ollama isn't available.
-            """)
-        
-        # Reset button
-        if st.button("🔄 Start New Session"):
-            st.session_state.chatbot = TalentScoutChatbot()
-            st.session_state.messages = []
-            initial_greeting = st.session_state.chatbot.generate_greeting()
-            st.session_state.messages.append({"role": "assistant", "content": initial_greeting})
+            <style>
+            [data-testid="send-btn"] button {
+                background: #00c3ff !important;
+                border-radius: 50% !important;
+                width: 38px !important;
+                height: 38px !important;
+                padding: 0 !important;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 1.3rem !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            send_clicked = st.form_submit_button("✈️", help="Send", type="primary")
+
+    # No custom JS, using Streamlit form for Ctrl+Enter
+
+    # Handle send
+    # Debug: print state and input
+    print(f"[DEBUG] send_clicked: {send_clicked}, user_input: '{user_input}', session user_input: '{st.session_state.get('user_input','')}'")
+    print(f"[DEBUG] conversation_state: {st.session_state.get('conversation_state')}, candidate_info: {st.session_state.get('candidate_info')}")
+    if send_clicked and user_input.strip():
+        # Only use the current text area value, do not rely on st.session_state.user_input
+        user_text = user_input.strip()
+        # Always clear input after send (handled by clear_on_submit, but ensure session state is also cleared)
+        st.session_state.user_input = ""
+        # Sentiment analysis
+        analyzer = st.session_state.sentiment_analyzer
+        sentiment = analyzer.polarity_scores(user_text)
+        # Exit keywords
+        if user_text.lower() in ["exit", "quit", "goodbye", "bye"]:
+            st.session_state.messages.append({"role": "user", "content": user_text, "sentiment": sentiment})
+            mongo_status = st.session_state.candidate_info.get("_mongo_save_status")
+            candidate_name = st.session_state.candidate_info.get("name")
+            candidate_position = st.session_state.candidate_info.get("position")
+            if mongo_status is True:
+                thank_you_msg = "Thank you, your answers have been saved. "
+                if candidate_name:
+                    thank_you_msg += f"{candidate_name}, "
+                if candidate_position:
+                    thank_you_msg += f"we'll be in touch regarding the {candidate_position} position. "
+                thank_you_msg += "You can close the window now."
+                st.session_state.messages.append({"role": "assistant", "content": thank_you_msg})
+            elif mongo_status is False:
+                st.session_state.messages.append({"role": "assistant", "content": "Error in storing your answers. Please try again later."})
+            else:
+                thank_you_msg = "Thank you for your time! "
+                if candidate_name:
+                    thank_you_msg += f"{candidate_name}, "
+                if candidate_position:
+                    thank_you_msg += f"we'll be in touch regarding the {candidate_position} position. "
+                thank_you_msg += "Have a great day! 👋"
+                st.session_state.messages.append({"role": "assistant", "content": thank_you_msg})
+            st.session_state.conversation_state = "ended"
+            st.session_state.user_input = ""
             st.rerun()
-    
-    # Main chat interface
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        st.markdown("### 💬 Chat Interface")
-        
-        # Display chat messages
-        chat_placeholder = st.empty()
-        
-        with chat_placeholder.container():
-            for message in st.session_state.messages:
-                if message["role"] == "user":
-                    st.markdown(f"""
-                    <div class="user-message">
-                        <strong>You:</strong> {message["content"]}
-                    </div>
-                    """, unsafe_allow_html=True)
+        # State machine for info gathering
+        state = st.session_state.conversation_state
+        info = st.session_state.candidate_info
+        # Only append user message once per send
+        if not (len(st.session_state.messages) > 0 and st.session_state.messages[-1].get("role") == "user" and st.session_state.messages[-1].get("content") == user_text):
+            st.session_state.messages.append({"role": "user", "content": user_text, "sentiment": sentiment})
+        def validate_with_llm(field, value, context=None):
+            prompt = f"You are a strict data validator for a job application form. The user entered the following for the field '{field}': '{value}'. "
+            if context:
+                prompt += f"Context: {context}. "
+            prompt += f"Is this a valid {field}? Reply only with 'yes' or 'no'."
+            try:
+                resp = st.session_state.chatbot.generate_response(prompt, system_message=None)
+            except Exception:
+                resp = None
+            # Debug output for LLM validation
+            print(f"[DEBUG] LLM validation prompt: {prompt}")
+            print(f"[DEBUG] LLM validation response: {resp}")
+            if resp and isinstance(resp, str):
+                answer = resp.strip().lower()
+                if answer.startswith('yes') or answer == 'yes':
+                    return True
+            return False
+
+        if state == "get_name":
+            # Fallback: Accept if name looks valid (letters, spaces, hyphens, apostrophes, at least 2 words)
+            def looks_like_name(val):
+                val = val.strip()
+                # At least two words, only letters, spaces, hyphens, apostrophes
+                return bool(re.match(r"^[A-Za-z][A-Za-z\-' ]+[A-Za-z]$", val)) and len(val.split()) >= 2
+
+            llm_valid = validate_with_llm("name", user_text)
+            if not llm_valid:
+                # If LLM says no, but regex says yes, accept
+                if looks_like_name(user_text):
+                    print(f"[DEBUG] LLM rejected name but regex accepted: '{user_text}'")
                 else:
-                    st.markdown(f"""
-                    <div class="bot-message">
-                        <strong>TalentScout Assistant:</strong> {message["content"]}
-                    </div>
-                    """, unsafe_allow_html=True)
-        
-        # User input
-        user_input = st.text_input(
-            "Your response:",
-            key="user_input",
-            placeholder="Type your message here...",
-            help="Type 'goodbye' or 'exit' to end the conversation"
-        )
-        
-        col_send, col_clear = st.columns([1, 1])
-        
-        with col_send:
-            if st.button("📤 Send", type="primary") and user_input:
-                # Add user message
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                
-                # Get bot response
-                bot_response = st.session_state.chatbot.process_user_input(user_input)
-                
-                # Add bot response
-                st.session_state.messages.append({"role": "assistant", "content": bot_response})
-                
-                # Clear input and rerun
+                    st.session_state.messages.append({"role": "assistant", "content": "Please enter a valid full name (no numbers or special characters)."})
+                    st.session_state.user_input = ""
+                    st.rerun()
+            info["name"] = user_text
+            personalized_name = info.get("name")
+            if personalized_name:
+                st.session_state.messages.append({"role": "assistant", "content": f"Thanks, {personalized_name}! What's your email address?"})
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "Thanks! What's your email address?"})
+            st.session_state.conversation_state = "get_email"
+        elif state == "get_email":
+            def looks_like_email(val):
+                # Simple email regex
+                return bool(re.match(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$", val.strip()))
+
+            llm_valid = validate_with_llm("email", user_text)
+            if not llm_valid:
+                if looks_like_email(user_text):
+                    print(f"[DEBUG] LLM rejected email but regex accepted: '{user_text}'")
+                else:
+                    st.session_state.messages.append({"role": "assistant", "content": "Please enter a valid email address (e.g., user@email.com)."})
+                    st.session_state.user_input = ""
+                    st.rerun()
+            info["email"] = user_text
+            personalized_name = info.get("name")
+            if personalized_name:
+                st.session_state.messages.append({"role": "assistant", "content": f"Great, {personalized_name}. And your phone number?"})
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "And your phone number?"})
+            st.session_state.conversation_state = "get_phone"
+        elif state == "get_phone":
+            def looks_like_phone(val):
+                val = val.strip().replace(' ', '').replace('-', '')
+                # Digits only, length 7-15
+                return val.isdigit() and 7 <= len(val) <= 15
+
+            if any(c.isalpha() for c in user_text):
+                st.session_state.messages.append({"role": "assistant", "content": "Please enter a valid phone number (digits only, no letters)."})
+                st.session_state.user_input = ""
                 st.rerun()
-        
-        with col_clear:
-            if st.button("🗑️ Clear Chat"):
-                st.session_state.messages = []
-                st.session_state.chatbot = TalentScoutChatbot()
-                initial_greeting = st.session_state.chatbot.generate_greeting()
-                st.session_state.messages.append({"role": "assistant", "content": initial_greeting})
+            llm_valid = validate_with_llm("phone number", user_text)
+            if not llm_valid:
+                if looks_like_phone(user_text):
+                    print(f"[DEBUG] LLM rejected phone but regex accepted: '{user_text}'")
+                else:
+                    st.session_state.messages.append({"role": "assistant", "content": "Please enter a valid phone number (digits only, no letters, and a reasonable length)."})
+                    st.session_state.user_input = ""
+                    st.rerun()
+            info["phone"] = user_text
+            personalized_name = info.get("name")
+            if personalized_name:
+                st.session_state.messages.append({"role": "assistant", "content": f"Thank you, {personalized_name}. How many years of professional experience do you have?"})
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "How many years of professional experience do you have?"})
+            st.session_state.conversation_state = "get_experience"
+        elif state == "get_experience":
+            def looks_like_experience(val):
+                val = val.strip()
+                # Accept 0-50 years, integer or float
+                try:
+                    years = float(val)
+                    return 0 <= years <= 50
+                except Exception:
+                    return False
+
+            llm_valid = validate_with_llm("years of professional experience", user_text)
+            if not llm_valid:
+                if looks_like_experience(user_text):
+                    print(f"[DEBUG] LLM rejected experience but regex accepted: '{user_text}'")
+                else:
+                    st.session_state.messages.append({"role": "assistant", "content": "Please enter a valid number of years of professional experience (e.g., 3, 5, 10)."})
+                    st.session_state.user_input = ""
+                    st.rerun()
+            info["experience"] = user_text
+            personalized_name = info.get("name")
+            if personalized_name:
+                st.session_state.messages.append({"role": "assistant", "content": f"Thanks, {personalized_name}. What position(s) are you interested in?"})
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "What position(s) are you interested in?"})
+            st.session_state.conversation_state = "get_position"
+        elif state == "get_position":
+            if not is_valid_position(user_text):
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "Please enter a valid job position or role (at least two words, only letters and spaces, minimum 5 characters, no symbols or numbers)."
+                })
+                st.session_state.user_input = ""
                 st.rerun()
-    
-    with col2:
-        st.markdown("### 📊 Session Status")
-        
-        # Progress indicator
-        state_map = {
-            "greeting": 0,
-            "collecting_info": 25,
-            "tech_stack": 50,
-            "technical_questions": 75,
-            "completed": 100
-        }
-        
-        progress = state_map.get(st.session_state.chatbot.conversation_state, 0)
-        st.progress(progress / 100)
-        st.write(f"Progress: {progress}%")
-        
-        # Current state
-        state_labels = {
-            "greeting": "👋 Greeting",
-            "collecting_info": "📝 Collecting Info",
-            "tech_stack": "⚡ Tech Stack",
-            "technical_questions": "🤔 Technical Questions",
-            "completed": "✅ Completed"
-        }
-        
-        current_state = state_labels.get(st.session_state.chatbot.conversation_state, "Unknown")
-        st.write(f"**Current Stage:** {current_state}")
-        
-        # Help section
-        st.markdown("### ❓ Need Help?")
-        st.markdown("""
-        - **Stuck?** Try rephrasing your response
-        - **Error?** Refresh the page to restart
-        - **Questions?** Type 'goodbye' to end and contact us
-        - **Technical Issues?** Check the sidebar for guidance
-        """)
+            else:
+                info["position"] = user_text.strip()
+                personalized_name = info.get("name")
+                if personalized_name:
+                    st.session_state.messages.append({"role": "assistant", "content": f"Thank you, {personalized_name}. Where are you currently located? (City, Country)"})
+                else:
+                    st.session_state.messages.append({"role": "assistant", "content": "Where are you currently located? (City, Country)"})
+                st.session_state.conversation_state = "get_location"
+        elif state == "get_location":
+            def is_valid_location(val):
+                val = val.strip()
+                # Only letters, spaces, commas, hyphens; at least two words, minimum 5 characters
+                if not re.match(r'^[A-Za-z ,\-]+$', val):
+                    return False
+                if len(val) < 5:
+                    return False
+                if len(val.split()) < 2:
+                    return False
+                return True
+
+            if not is_valid_location(user_text):
+                st.session_state.messages.append({"role": "assistant", "content": "Please enter a valid location (e.g., City, Country). Use only letters, spaces, commas, and hyphens."})
+                st.session_state.user_input = ""
+                st.rerun()
+            info["location"] = user_text
+            personalized_name = info.get("name")
+            if personalized_name:
+                st.session_state.messages.append({"role": "assistant", "content": f"Thanks, {personalized_name}. Please list your tech stack (programming languages, frameworks, databases, tools)."})
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "Please list your tech stack (programming languages, frameworks, databases, tools)."})
+            st.session_state.conversation_state = "get_tech_stack"
+        elif state == "get_tech_stack":
+            info["tech_stack"] = user_text
+            # Split tech stack into skills (comma or semicolon separated)
+            skills = [s.strip() for s in re.split(r",|;", user_text) if s.strip()]
+            info["tech_questions"] = []
+            info["answers"] = {}
+            # Validate tech stack
+            if not skills or any(len(skill) < 2 for skill in skills):
+                st.session_state.messages.append({"role": "assistant", "content": "Please enter at least one valid skill in your tech stack (e.g., python, fastapi, langchain)."})
+                st.session_state.user_input = ""
+                st.rerun()
+            info["_skills"] = skills
+            info["_current_skill_idx"] = 0
+            # Generate all questions for all skills at once
+            all_questions = []
+            asked_questions = set()
+            for skill in skills:
+                max_attempts = 3
+                question = None
+                for attempt in range(max_attempts):
+                    with st.spinner(f"Wait, we are getting a technical question for {skill}... (Attempt {attempt+1})"):
+                        system_prompt = (
+                            f"You are an AI hiring assistant. Generate a technical interview question for a BEGINNER about the following skill: {skill}. "
+                            f"The question must be specific to {skill} and NOT about any other skill. "
+                            "Return only the question, do not number it."
+                        )
+                        print(f"[DEBUG] LLM system_prompt for skill '{skill}': {system_prompt}")
+                        try:
+                            question = st.session_state.chatbot.generate_response(system_prompt, system_message=None)
+                            print(f"[DEBUG] LLM response for skill '{skill}': {question}")
+                        except Exception as e:
+                            print(f"[ERROR] LLM exception for skill '{skill}': {e}")
+                            question = None
+                        if question and isinstance(question, str) and len(question.strip()) > 5:
+                            qtext = question.strip()
+                            if qtext not in asked_questions:
+                                all_questions.append(qtext)
+                                asked_questions.add(qtext)
+                                break
+                            else:
+                                print(f"[DEBUG] Duplicate question detected for skill '{skill}': {qtext}")
+                                question = None
+                # Fallback to local question bank if LLM fails
+                if not question or not (isinstance(question, str) and len(question.strip()) > 5):
+                    local_q = LOCAL_QUESTION_BANK.get(skill.lower())
+                    if local_q:
+                        all_questions.append(local_q)
+                        print(f"[DEBUG] Local question bank used for skill '{skill}': {local_q}")
+                    else:
+                        all_questions.append(f"[ERROR] Could not generate a unique technical question for {skill}. Please try again, rephrase your tech stack, or answer: What is your experience with {skill}? (Describe briefly.)")
+                        print(f"[DEBUG] Fallback error message for skill '{skill}'")
+            info["tech_questions"] = all_questions
+            info["_asked_questions"] = list(asked_questions)
+            info["_current_skill_idx"] = 0
+            # Ask the first question
+            personalized_name = info.get("name")
+            first_question = all_questions[0] if all_questions else None
+            if first_question:
+                if personalized_name:
+                    st.session_state.messages.append({"role": "assistant", "content": f"Great, {personalized_name}! Here is your technical question:\n\n{first_question}"})
+                else:
+                    st.session_state.messages.append({"role": "assistant", "content": f"Great! Here is your technical question:\n\n{first_question}"})
+                st.session_state.conversation_state = "tech_questions"
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "I'm having trouble generating technical questions for your tech stack. Please try again or rephrase your tech stack."})
+                st.session_state.user_input = ""
+                st.rerun()
+        elif state == "tech_questions":
+            # Save answer to the last question
+            qlist = info["tech_questions"] if isinstance(info["tech_questions"], list) else []
+            answered = len(info["answers"])
+            # Ask next question in the list
+            if answered < len(qlist):
+                info["answers"][f"Q{answered+1}"] = user_text
+                next_idx = answered + 1
+                if next_idx < len(qlist):
+                    next_question = qlist[next_idx]
+                    personalized_name = info.get("name")
+                    if personalized_name:
+                        st.session_state.messages.append({"role": "assistant", "content": f"Thank you, {personalized_name}! Here is your next technical question:\n\n{next_question}"})
+                    else:
+                        st.session_state.messages.append({"role": "assistant", "content": f"Thank you! Here is your next technical question:\n\n{next_question}"})
+                    st.session_state.conversation_state = "tech_questions"
+                else:
+                    # All questions answered
+                    info["tech_questions"] = []
+                    info["_current_skill_idx"] = len(qlist)
+                    personalized_name = info.get("name")
+                    personalized_position = info.get("position")
+                    thank_you_msg = "Thank you for answering all the questions! "
+                    if personalized_name:
+                        thank_you_msg += f"{personalized_name}, "
+                    if personalized_position:
+                        thank_you_msg += f"we'll be in touch regarding the {personalized_position} position. "
+                    thank_you_msg += "If you have anything else to add, let me know. Otherwise, type 'exit' to finish."
+                    st.session_state.messages.append({"role": "assistant", "content": thank_you_msg})
+                    st.session_state.conversation_state = "completed"
+                    # Insert candidate_info into 'user' collection in MongoDB
+                    if st.session_state.mongo_ok:
+                        try:
+                            mongo_url = MONGO_URL
+                            mongo_db = "Chatbot"
+                            mongo_collection = "user"
+                            print(f"[DEBUG] MongoDB URL: {mongo_url}")
+                            print(f"[DEBUG] MongoDB Database: {mongo_db}")
+                            print(f"[DEBUG] MongoDB Collection: {mongo_collection}")
+                            db = st.session_state.mongo_client[mongo_db]
+                            db[mongo_collection].insert_one(dict(info))
+                            print("[DEBUG] Inserted candidate_info into Chatbot.user collection.")
+                            info["_mongo_save_status"] = True
+                        except Exception as e:
+                            print(f"[ERROR] Failed to insert into Chatbot.user collection: {e}")
+                            info["_mongo_save_status"] = False
+        elif state == "question_retry_choice":
+            # Handle user choice after failed question generation
+            user_choice = user_text.lower().strip()
+            skill = st.session_state.get("failed_skill")
+            idx = st.session_state.get("failed_skill_idx")
+            info["_current_skill_idx"] = idx
+            if user_choice == "retry":
+                st.session_state.conversation_state = "tech_questions"
+                st.session_state.user_input = ""
+                st.rerun()
+            elif user_choice == "skip":
+                info["_current_skill_idx"] = idx + 1
+                st.session_state.conversation_state = "tech_questions"
+                st.session_state.user_input = ""
+                st.rerun()
+            elif user_choice == "rephrase":
+                st.session_state.messages.append({"role": "assistant", "content": f"Please enter a new skill name to replace '{skill}':"})
+                st.session_state.conversation_state = "rephrase_skill"
+                st.session_state.user_input = ""
+                st.rerun()
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "Invalid choice. Please type 'retry', 'skip', or 'rephrase'."})
+                st.session_state.user_input = ""
+                st.rerun()
+
+        elif state == "rephrase_skill":
+            # Accept new skill name and retry question generation
+            new_skill = user_text.strip()
+            idx = st.session_state.get("failed_skill_idx")
+            skills = info.get("_skills", [])
+            if new_skill:
+                skills[idx] = new_skill
+                info["_skills"] = skills
+                st.session_state.messages.append({"role": "assistant", "content": f"Skill updated to '{new_skill}'. Trying to generate a question..."})
+                st.session_state.conversation_state = "tech_questions"
+                st.session_state.user_input = ""
+                st.rerun()
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": "Please enter a valid skill name."})
+                st.session_state.user_input = ""
+                st.rerun()
+        else:
+            # Fallback for unexpected state
+            fallback_name = info.get("name")
+            fallback_position = info.get("position")
+            fallback_msg = "I'm here to help with your screening. "
+            if fallback_name:
+                fallback_msg += f"{fallback_name}, "
+            fallback_msg += "please answer the previous question or type 'exit' to finish."
+            if fallback_position:
+                fallback_msg += f" (Position: {fallback_position})"
+            st.session_state.messages.append({"role": "assistant", "content": fallback_msg})
+        st.session_state.user_input = ""
+        # Auto-save to MongoDB
+        if st.session_state.mongo_ok:
+            try:
+                from datetime import UTC
+                doc = {
+                    "messages": st.session_state.messages,
+                    "timestamp": datetime.now(UTC),
+                    "user": os.getenv("USER", "anonymous"),
+                    "candidate_info": st.session_state.candidate_info
+                }
+                db = st.session_state.mongo_client[MONGO_DB]
+                db[MONGO_COLLECTION].insert_one(doc)
+            except Exception:
+                pass
+        st.rerun()
+    else:
+        # No need to update st.session_state.user_input here; let the text area always start empty
+        if st.button("🔄 Start New Session", type="primary"):
+            st.session_state.chatbot = Phi3OllamaManager(LLMConfig(is_cloud=os.getenv("DEPLOYMENT_MODE") == "cloud"))
+            st.session_state.messages = []
+            st.session_state.user_input = ""
+            st.session_state.user_name = None
+            st.session_state.conversation_state = "greeting"
+            st.session_state.candidate_info = {
+                "name": None,
+                "email": None,
+                "phone": None,
+                "experience": None,
+                "position": None,
+                "location": None,
+                "tech_stack": None,
+                "tech_questions": [],
+                "answers": {}
+            }
+            st.rerun()
+
+    st.markdown("<div style='margin-top:2rem;text-align:center;color:#aaa;'>Powered by Phi-3 AI and Ollama • Built with TalentScout | 🔒 Data handled securely.</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
